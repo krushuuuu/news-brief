@@ -1,0 +1,75 @@
+# Your news sources. Add or remove lines freely.
+# Format:  - url: <rss link>
+#            name: <what to call it in the email>
+#            topic: semis | geopolitics | finance
+#
+# To add a source: find its RSS link (usually sitename.com/feed or /rss)
+# and copy the pattern below. To remove one, delete its 3 lines.
+
+feeds:
+
+  # ---------- SEMICONDUCTORS ----------
+  - url: https://www.tomshardware.com/feeds/all
+    name: Tom's Hardware
+    topic: semis
+
+  - url: https://www.eetimes.com/feed/
+    name: EE Times
+    topic: semis
+
+  - url: https://semiengineering.com/feed/
+    name: Semiconductor Engineering
+    topic: semis
+
+  - url: https://www.anandtech.com/rss/
+    name: AnandTech
+    topic: semis
+
+  - url: https://www.theregister.com/headlines.atom
+    name: The Register
+    topic: semis
+
+  # ---------- GEOPOLITICS / EXPORT CONTROLS ----------
+  # BIS is the US agency that actually writes chip export control rules.
+  # This is a primary source - you see the rule before the news covers it.
+  - url: https://www.bis.doc.gov/index.php/about-bis/newsroom/press-releases?format=feed&type=rss
+    name: US Bureau of Industry & Security
+    topic: geopolitics
+
+  - url: https://feeds.bbci.co.uk/news/world/rss.xml
+    name: BBC World
+    topic: geopolitics
+
+  - url: https://warontherocks.com/feed/
+    name: War on the Rocks
+    topic: geopolitics
+
+  - url: https://www.csis.org/rss.xml
+    name: CSIS
+    topic: geopolitics
+
+  - url: https://thediplomat.com/feed/
+    name: The Diplomat
+    topic: geopolitics
+
+  # ---------- FINANCE / MACRO ----------
+  # Fed press releases - primary source for US rate decisions.
+  - url: https://www.federalreserve.gov/feeds/press_all.xml
+    name: US Federal Reserve
+    topic: finance
+
+  - url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+    name: CNBC Finance
+    topic: finance
+
+  - url: https://www.marketwatch.com/rss/topstories
+    name: MarketWatch
+    topic: finance
+
+  - url: https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms
+    name: Economic Times Markets
+    topic: finance
+
+  - url: https://www.livemint.com/rss/markets
+    name: Mint Markets
+    topic: finance
