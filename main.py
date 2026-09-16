@@ -53,7 +53,7 @@ MAX_TO_SCORE = 70
 
 # Groq's free model. If this ever errors with "model not found", check
 # https://console.groq.com/docs/models and paste a current name here.
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "openai/gpt-oss-120b"
 
 SEEN_FILE = "seen.json"
 MAX_SEEN = 3000  # forget older entries so the file doesn't grow forever
