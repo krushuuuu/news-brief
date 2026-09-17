@@ -4,11 +4,11 @@ Daily news agent: semiconductors, geopolitics, finance.
 What it does, in order:
   1. Reads your RSS sources from feeds.yaml
   2. Keeps only articles published in the last ~30 hours
-  3. Throws away anything it already emailed you before (seen.json)
-  4. Throws away near-duplicate stories (30 outlets, same TSMC news)
+  3. Throws away anything it already showed you before (seen.json)
+  4. Throws away near-duplicate stories (many outlets, same TSMC news)
   5. Asks a free AI model to score each story 1-5 for how much YOU care
-  6. Emails you the ones scoring 3+, grouped by topic
-  7. Remembers what it sent, so tomorrow is fresh
+  6. Builds a clean web page from the ones scoring 4+, grouped by topic
+  7. Remembers what it showed, so tomorrow is fresh
 
 You should not need to edit this file. Edit feeds.yaml and PROFILE below.
 """
@@ -17,10 +17,7 @@ import os
 import re
 import json
 import html
-import smtplib
 import datetime as dt
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 import yaml
 import feedparser
@@ -38,6 +35,15 @@ Samsung, fab construction and capacity, US-China tech competition, Taiwan
 security, AI compute demand, central bank rate decisions, and major market
 moves. I am based in India, so India-specific policy and market news is
 relevant too.
+
+Geopolitics is my top priority and I want real depth on it: military
+movements and conflicts, sanctions and export control changes, diplomatic
+meetings and their outcomes, alliance shifts (NATO, Quad, BRICS), Taiwan
+Strait tensions, South China Sea incidents, Russia-Ukraine and Middle East
+developments, and any event that could move markets or chip supply chains.
+For geopolitics specifically, give me the concrete details - who, what
+happened, numbers/dates, and why it matters - not just a headline restated.
+
 I do NOT care about: consumer gadget reviews, gaming GPU benchmarks, celebrity
 business gossip, sports, routine stock-picking opinion pieces.
 """
@@ -45,15 +51,16 @@ business gossip, sports, routine stock-picking opinion pieces.
 # How many hours back to look. 30 gives a safety margin over a 24h cycle.
 LOOKBACK_HOURS = 30
 
-# Minimum relevance score (1-5) to include in the email.
-MIN_SCORE = 3
+# Minimum relevance score (1-5) to include. 4 keeps only genuinely important
+# stories, not borderline noise.
+MIN_SCORE = 4
 
 # Max articles sent to the AI per run. Keeps you inside free API limits.
 MAX_TO_SCORE = 70
 
 # Groq's free model. If this ever errors with "model not found", check
 # https://console.groq.com/docs/models and paste a current name here.
-MODEL = "openai/gpt-oss-120b"
+MODEL = "llama-3.3-70b-versatile"
 
 SEEN_FILE = "seen.json"
 MAX_SEEN = 3000  # forget older entries so the file doesn't grow forever
@@ -162,7 +169,6 @@ def canonical(url):
 
 def deduplicate(articles, seen):
     seen_urls = set(seen["urls"])
-    # Headlines already emailed on previous days
     old_stories = [set(k) for k in seen["fingerprints"]]
     kept_stories = []
     fresh = []
@@ -173,7 +179,6 @@ def deduplicate(articles, seen):
             continue
 
         words = keywords(a["title"])
-        # Same story as something sent before, or as something earlier in this run?
         if any(same_story(words, old) for old in old_stories):
             continue
         if any(same_story(words, kept) for kept in kept_stories):
@@ -189,12 +194,12 @@ def deduplicate(articles, seen):
 
 
 # ---------------------------------------------------------------------------
-# Step 5: ask the AI to score relevance and write one-line summaries
+# Step 5: ask the AI to score relevance and write summaries
 # ---------------------------------------------------------------------------
 def score_articles(articles):
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        raise SystemExit("GROQ_API_KEY is not set. See README step 3.")
+        raise SystemExit("GROQ_API_KEY is not set. See README.")
 
     items = articles[:MAX_TO_SCORE]
     listing = "\n".join(
@@ -207,13 +212,31 @@ def score_articles(articles):
 
 Below are today's news headlines. For EACH one, rate 1-5 how relevant it is to
 this reader (5 = they must see this today, 1 = irrelevant noise) and write a
-single factual sentence summarising it in your own words.
+summary in your own words.
+
+Scoring rules:
+- Score down (2 or lower) anything speculative, opinion-driven, clickbait-
+  phrased, or based on unnamed "sources say" rumors rather than confirmed
+  facts. This reader wants accurate, confirmed developments, not chatter.
+- Score up (4-5) hard news from primary or authoritative sources: official
+  statements, government/agency releases, confirmed events, earnings/data
+  releases, and significant on-the-ground developments.
+- If two headlines describe the same event, judge them on substance, not
+  on how dramatic the headline sounds.
+
+Summary length depends on topic:
+- geopolitics items: write 2-3 detailed sentences. Include concrete specifics
+  from the snippet given - who is involved, what exactly happened, any
+  numbers, dates or locations, and why it matters strategically. Stick to
+  what the snippet actually states; do not speculate or add claims that
+  aren't in the source snippet. Do not just reword the headline.
+- semis and finance items: one clear factual sentence is enough.
 
 Headlines:
 {listing}
 
 Reply with ONLY a JSON array, no markdown fences, no commentary:
-[{{"i": 0, "score": 4, "line": "one sentence"}}, ...]
+[{{"i": 0, "score": 4, "line": "summary text"}}, ...]
 Include an entry for every headline."""
 
     response = requests.post(
@@ -223,14 +246,13 @@ Include an entry for every headline."""
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "max_tokens": 4000,
+            "max_tokens": 6000,
         },
         timeout=120,
     )
     response.raise_for_status()
     text = response.json()["choices"][0]["message"]["content"]
 
-    # Strip code fences if the model adds them anyway
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
 
     try:
@@ -238,7 +260,7 @@ Include an entry for every headline."""
     except json.JSONDecodeError:
         match = re.search(r"\[.*\]", text, re.DOTALL)
         if not match:
-            print("AI reply could not be parsed. Sending unscored digest.")
+            print("AI reply could not be parsed. Showing unscored digest.")
             for a in items:
                 a["score"], a["line"] = 3, a["summary"][:200]
             return items
@@ -258,7 +280,7 @@ Include an entry for every headline."""
 
 
 # ---------------------------------------------------------------------------
-# Step 6: build and send the email
+# Step 6: build the web page
 # ---------------------------------------------------------------------------
 TOPIC_LABELS = {
     "semis": "Semiconductors",
@@ -266,68 +288,99 @@ TOPIC_LABELS = {
     "finance": "Finance &amp; Markets",
 }
 
+PAGE_STYLE = """
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1a1a1a; --muted: #666;
+    --border: #e5e5e5; --accent: #0b57d0; --star: #e8a33d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15161a; --card: #1e1f24; --text: #eaeaea; --muted: #999;
+             --border: #333; --accent: #7db3ff; --star: #f0b93d; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 60px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 700px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 2px; }
+  .updated { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); border-bottom: 1px solid var(--border);
+    padding-bottom: 8px; margin: 32px 0 16px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card a {
+    color: var(--text); text-decoration: none; font-weight: 600; font-size: 16px;
+    display: block; margin-bottom: 6px;
+  }
+  .card a:hover { color: var(--accent); }
+  .card .line { font-size: 14.5px; color: var(--text); opacity: 0.9; }
+  .card .meta { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .stars { color: var(--star); }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .footer { color: var(--muted); font-size: 11px; margin-top: 40px; text-align: center; }
+</style>
+"""
 
-def build_email(articles, errors):
-    today = dt.datetime.now().strftime("%A, %d %B %Y")
+
+def build_page(articles, errors):
+    now = dt.datetime.now(dt.timezone.utc)
+    updated = now.strftime("%A, %d %B %Y - %H:%M UTC")
     keepers = [a for a in articles if a["score"] >= MIN_SCORE]
     keepers.sort(key=lambda a: a["score"], reverse=True)
 
-    parts = [f"""<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;
-max-width:640px;margin:0 auto;color:#1a1a1a;line-height:1.5">
-<h1 style="font-size:20px;margin:0 0 4px">Daily Brief</h1>
-<div style="color:#666;font-size:13px;margin-bottom:24px">{today} &middot;
-{len(keepers)} stories</div>"""]
+    body = [f"""<h1>Daily Brief</h1>
+<div class="updated">Updated {updated} &middot; {len(keepers)} stories</div>"""]
 
     if not keepers:
-        parts.append("<p>Nothing met your relevance bar today. Quiet news cycle, "
-                     "or your filters are tight.</p>")
+        body.append('<div class="empty">Nothing met the relevance bar in this run.</div>')
 
-    for topic in ["semis", "geopolitics", "finance"]:
+    for topic in ["geopolitics", "semis", "finance"]:
         group = [a for a in keepers if a["topic"] == topic]
         if not group:
             continue
-        parts.append(f"""<h2 style="font-size:14px;text-transform:uppercase;
-letter-spacing:0.06em;color:#888;border-bottom:1px solid #e5e5e5;
-padding-bottom:6px;margin:28px 0 14px">{TOPIC_LABELS[topic]}</h2>""")
-
+        body.append(f'<h2>{TOPIC_LABELS[topic]}</h2>')
         for a in group:
             stars = "&#9733;" * a["score"]
-            parts.append(f"""<div style="margin-bottom:18px">
-<a href="{html.escape(a['url'])}" style="color:#0b57d0;text-decoration:none;
-font-weight:600;font-size:15px">{html.escape(a['title'])}</a>
-<div style="font-size:14px;color:#333;margin-top:3px">{html.escape(a['line'])}</div>
-<div style="font-size:12px;color:#999;margin-top:3px">{html.escape(a['source'])}
-&middot; <span style="color:#e8a33d">{stars}</span></div></div>""")
+            body.append(f"""<div class="card">
+<a href="{html.escape(a['url'])}" target="_blank" rel="noopener">{html.escape(a['title'])}</a>
+<div class="line">{html.escape(a['line'])}</div>
+<div class="meta">{html.escape(a['source'])} &middot; <span class="stars">{stars}</span></div>
+</div>""")
 
     if errors:
-        parts.append(f"""<div style="font-size:11px;color:#bbb;margin-top:32px;
-border-top:1px solid #eee;padding-top:8px">Feed issues: {html.escape(', '.join(errors[:5]))}</div>""")
+        body.append(f'<div class="footer">Feed issues this run: {html.escape(", ".join(errors[:5]))}</div>')
 
-    parts.append("</div>")
-    return "".join(parts), len(keepers)
+    body.append('<div class="footer">Refreshes automatically once a day.</div>')
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Brief</title>
+{PAGE_STYLE}
+</head>
+<body>
+<div class="wrap">
+{''.join(body)}
+</div>
+</body>
+</html>"""
 
 
-def send_email(body, count):
-    user = os.environ.get("EMAIL_USER")
-    password = os.environ.get("EMAIL_PASS")
-    to = os.environ.get("EMAIL_TO", user)
-
-    if not user or not password:
-        print("Email not configured. Printing digest instead:\n")
-        print(body)
-        return
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Daily Brief - {count} stories - {dt.datetime.now():%d %b}"
-    msg["From"] = user
-    msg["To"] = to
-    msg.attach(MIMEText(body, "html"))
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(user, password)
-        server.send_message(msg)
-
-    print(f"Sent {count} stories to {to}")
+def save_page(html_content):
+    os.makedirs("docs", exist_ok=True)
+    with open("docs/index.html", "w") as f:
+        f.write(html_content)
+    print("Wrote docs/index.html")
 
 
 # ---------------------------------------------------------------------------
@@ -341,16 +394,15 @@ def main():
     print(f"  {len(fresh)} after removing seen and duplicate stories")
 
     if not fresh:
-        print("Nothing new. Not sending an email.")
+        print("Nothing new. Leaving yesterday's page as-is.")
         return
 
     print("Scoring with AI...")
     scored = score_articles(fresh)
 
-    body, count = build_email(scored, errors)
-    send_email(body, count)
+    page_html = build_page(scored, errors)
+    save_page(page_html)
 
-    # Only remember what we actually scored, so unscored leftovers can appear tomorrow
     seen["urls"].extend(a["url_key"] for a in scored)
     seen["fingerprints"].extend(a["words"] for a in scored)
     save_seen(seen)
